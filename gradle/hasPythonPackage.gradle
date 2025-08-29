@@ -42,10 +42,11 @@ task assemblePyPackage(type: Copy) {
 }
 
 task buildPyPackage {
-	dependsOn assemblePyPackage
-	ext.dist = { file("build/pypkg/dist") }
-	inputs.files(assemblePyPackage)
-	outputs.dir(dist)
+    dependsOn assemblePyPackage
+    dependsOn(":createPythonVirtualEnvironment")
+    ext.dist = { file("build/pypkg/dist") }
+    inputs.files(assemblePyPackage)
+    outputs.dir(dist)
 
 	def debuggerRmiTraceProject = project(":Debugger-rmi-trace")
 
@@ -56,18 +57,19 @@ task buildPyPackage {
 	
 		File setuptools = debuggerRmiTraceProject.findPyDep(".")
 		
-		def exec = providers.exec {
-			workingDir { file("build/pypkg") }
-			ignoreExitValue = true
-			commandLine rootProject.PYTHON3
-			args "-m", "pip", "wheel", "-w", "dist/", "--no-index", "--no-deps", "-f", setuptools, "."
-		}
-		if (exec.result.get().exitValue != 0) {
-			throw new GradleException(exec.standardError.asText.get().strip())
-		}
-		if (exec.standardOutput.asText.get().contains("Successfully built UNKNOWN")) {
-			throw new GradleException("UNKNOWN wheel built...upgrade pip")
-		}
+        def exec = providers.exec {
+            workingDir { file("build/pypkg") }
+            ignoreExitValue = true
+            // Use system Python to build wheels for offline/flag parity reliability
+            commandLine rootProject.PYTHON3
+            args "-m", "pip", "wheel", "-w", "dist/", "--no-index", "--no-deps", "-f", setuptools, "."
+        }
+        if (exec.result.get().exitValue != 0) {
+            throw new GradleException(exec.standardError.asText.get().strip())
+        }
+        if (exec.standardOutput.asText.get().contains("Successfully built UNKNOWN")) {
+            throw new GradleException("UNKNOWN wheel built...upgrade pip")
+        }
 	}
 }
 

@@ -19,18 +19,30 @@
  * Summary: Creates a Python virtual environment directory at "build/venv"  
  ******************************************************************************************/
 task createPythonVirtualEnvironment(type: Exec) {
-	def venvDir = "build/venv"
-	def binDir = isCurrentWindows() ? "Scripts" : "bin"
-	def suffix = isCurrentWindows() ? ".exe" : "3"
-	project.ext.PYTHON3_VENV = "${rootProject.projectDir}/${venvDir}/${binDir}/python${suffix}"
-	project.ext.PIP3_VENV = "${rootProject.projectDir}/${venvDir}/${binDir}/pip${suffix}"
-	
-	doFirst {
-		if (rootProject.PYTHON3 == null) {
-			throw new GradleException("A supported version of Python [${PYTHON_SUPPORTED}] was not found!")
-		}
-		
-		commandLine rootProject.PYTHON3
-		args "-m", "venv", venvDir, "--copies"
-	}
+    def venvDir = "build/venv"
+    def binDir = isCurrentWindows() ? "Scripts" : "bin"
+    def suffix = isCurrentWindows() ? ".exe" : "3"
+    project.ext.PYTHON3_VENV = "${rootProject.projectDir}/${venvDir}/${binDir}/python${suffix}"
+    project.ext.PIP3_VENV = "${rootProject.projectDir}/${venvDir}/${binDir}/pip${suffix}"
+    
+    doFirst {
+        // Prefer uv-managed venv for portability; fall back to python -m venv
+        if (rootProject.hasProperty('isUvAvailable') && rootProject.isUvAvailable()) {
+            def uvPythonVersion = System.getenv('GHIDRA_UV_PYTHON') ?: System.getProperty('ghidra.uv.python')
+            if (!uvPythonVersion) {
+                uvPythonVersion = rootProject.getPinnedPythonVersion()
+            }
+            if (uvPythonVersion) {
+                commandLine "uv", "venv", venvDir, "--python", uvPythonVersion
+            } else {
+                commandLine "uv", "venv", venvDir
+            }
+        } else {
+            if (rootProject.PYTHON3 == null) {
+                throw new GradleException("A supported version of Python [${PYTHON_SUPPORTED}] was not found!")
+            }
+            commandLine rootProject.PYTHON3
+            args "-m", "venv", venvDir, "--copies"
+        }
+    }
 }

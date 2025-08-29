@@ -67,9 +67,14 @@ task installJPype(type: Exec) {
 	File binRepoDir = file("${BIN_REPO}/ExternalPyWheels")
 	def dir = depsDir.exists() ? depsDir : binRepoDir
 	
-	doFirst {
-		commandLine "$PYTHON3_VENV", "-m", "pip", "install", "--no-index", "-f", "$dir", "JPype1"
-	}
+    doFirst {
+        def uvAvailable = rootProject.isUvAvailable()
+        if (uvAvailable) {
+            commandLine "uv", "pip", "install", "--python", "$PYTHON3_VENV", "--no-index", "--find-links", "$dir", "JPype1"
+        } else {
+            commandLine "$PYTHON3_VENV", "-m", "pip", "install", "--no-index", "-f", "$dir", "JPype1"
+        }
+    }
 }
 
 // Install ghidra-stubs into the development virtual environment
@@ -81,9 +86,14 @@ task installGhidraStubs(type: Exec) {
 	File binRepoDir = file("${BIN_REPO}/ExternalPyWheels")
 	def dir = depsDir.exists() ? depsDir : binRepoDir
 
-	doFirst {
-		commandLine "$PYTHON3_VENV", "-m", "pip", "install", "--no-index", "-f", "${ROOT_PROJECT_DIR}/build/typestubs/dist", "ghidra-stubs" 
-	}
+    doFirst {
+        def uvAvailable = rootProject.isUvAvailable()
+        if (uvAvailable) {
+            commandLine "uv", "pip", "install", "--python", "$PYTHON3_VENV", "--no-index", "--find-links", "${ROOT_PROJECT_DIR}/build/typestubs/dist", "ghidra-stubs"
+        } else {
+            commandLine "$PYTHON3_VENV", "-m", "pip", "install", "--no-index", "-f", "${ROOT_PROJECT_DIR}/build/typestubs/dist", "ghidra-stubs"
+        }
+    }
 }
 
 // Prepares PyGhidra for development by installing it in editable mode to the development virtual
@@ -96,9 +106,14 @@ task prepPyGhidra(type: Exec) {
 	File binRepoDir = file("${BIN_REPO}/ExternalPyWheels")
 	def dir = depsDir.exists() ? depsDir : binRepoDir
 
-	doFirst {
-		commandLine "$PYTHON3_VENV", "-m", "pip", "install", "-e", "src/main/py", "--no-index", "-f", "$dir"
-	}
+    doFirst {
+        def uvAvailable = rootProject.isUvAvailable()
+        if (uvAvailable) {
+            commandLine "uv", "pip", "install", "--python", "$PYTHON3_VENV", "-e", "src/main/py", "--no-index", "--find-links", "$dir"
+        } else {
+            commandLine "$PYTHON3_VENV", "-m", "pip", "install", "-e", "src/main/py", "--no-index", "-f", "$dir"
+        }
+    }
 }
 
 rootProject.assembleMarkdownToHtml {

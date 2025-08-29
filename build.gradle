@@ -48,7 +48,71 @@ if ("32".equals(System.getProperty("sun.arch.data.model"))) {
 /***************************************************************************************
  * Identify supported Python command
  ***************************************************************************************/
-project.ext.PYTHON3 = findPython3(true)
+// Cross-platform uv availability helper (fast and robust)
+ext.isUvAvailable = { ->
+    // 1) Try invoking directly
+    try {
+        def p = new ProcessBuilder("uv", "--version").redirectErrorStream(true).start()
+        if (p.waitFor() == 0) return true
+    } catch (Exception ignored) { /* fall through */ }
+    // 2) Scan PATH for an executable named 'uv' (or 'uv.exe' on Windows)
+    try {
+        boolean isWindows = System.properties['os.name']?.toLowerCase()?.contains('windows')
+        String path = System.getenv('PATH') ?: ''
+        String sep = java.io.File.pathSeparator
+        for (String dir : path.split(java.util.regex.Pattern.quote(sep))) {
+            if (dir == null || dir.isEmpty()) continue
+            java.io.File f = new java.io.File(dir, isWindows ? 'uv.exe' : 'uv')
+            if (f.exists() && f.isFile() && f.canExecute()) return true
+        }
+    } catch (Exception ignored) { }
+    return false
+}
+
+// Returns a pinned Python version from .python-version (if present). Examples: "3.13", "cpython@3.12.7"
+ext.getPinnedPythonVersion = { ->
+    try {
+        File f = file(".python-version")
+        if (!f.exists()) return null
+        String raw = f.text.readLines().find { it?.trim() }?.trim()
+        if (!raw) return null
+        String v = raw
+        // Accept pyenv/uv styles like "cpython@3.13.1" or "cpython-3.13.1"
+        v = v.replaceFirst(/^cpython[@-]/, '')
+        // Reduce to major.minor for our selector
+        def m = (v =~ /^(\d+)\.(\d+)(?:\.\d+)?$/)
+        if (m.matches()) {
+            return m.group(1) + '.' + m.group(2)
+        }
+        return null
+    } catch (Exception ignored) {
+        return null
+    }
+}
+
+// Cache detection at configuration time for visibility in logs
+ext.UV_AVAILABLE_AT_CONFIG = ext.isUvAvailable()
+if (UV_AVAILABLE_AT_CONFIG) {
+    logger.lifecycle('uv detected: will use uv pip where applicable')
+}
+
+// Allow a custom Python override. Accept a single executable path and optional args via *.args
+def customPython = System.getenv('GHIDRA_PYTHON') ?: System.getProperty('ghidra.python')
+def customPythonArgs = System.getenv('GHIDRA_PYTHON_ARGS') ?: System.getProperty('ghidra.python.args')
+if (customPython) {
+    String exe = customPython.trim()
+    if ((exe.startsWith('"') && exe.endsWith('"')) || (exe.startsWith("'") && exe.endsWith("'"))) {
+        exe = exe.substring(1, exe.length() - 1)
+    }
+    List<String> cmd = [exe]
+    if (customPythonArgs) {
+        cmd.addAll(tokenizeArgs(customPythonArgs))
+    }
+    project.ext.PYTHON3 = cmd
+    logger.lifecycle("Using custom Python command: ${cmd}")
+} else {
+    project.ext.PYTHON3 = findPython3(true)
+}
 project.ext.PYTHON_DEPS = new HashMap<Project, Set<File>>()
 
 /*********************************************************************************
@@ -211,29 +275,60 @@ def findPython3(boolean shouldPrint) {
 		}
 		catch (IllegalArgumentException e) {
 			throw new GradleException("Invalid supported Python version list specified in application.properties.\n" + e.message);
-		}	
-	}
-
-	def pyCmds = supportedVersions.collectMany { [["python$it"], ["py", "-$it"]] }
-	pyCmds += [['python3'], ['python'], ['py']]
-	for (pyCmd in pyCmds) {	
-		def pyVer = checkPythonVersion(pyCmd)
-		def pyExe = getPythonExecutable(pyCmd)
-		if (pyVer in supportedVersions) {
-			if (shouldPrint) {
-				println("Python3 command: ${pyCmd} (${pyVer}, ${pyExe})")
-			}
-			checkPip(pyCmd, shouldPrint)
-			return pyCmd
 		}
 	}
 
-	if (shouldPrint) {
-		println("Warning: Supported Python [${PYTHON_SUPPORTED}] not found (required for build)")
-	}
-	
-	// Don't fail until task execution. Just retun null, which can be gracefully handled later.
-	return null
+    // Prefer version pinned via .python-version if present
+    def pinned = rootProject.getPinnedPythonVersion()
+    if (pinned && !(pinned in supportedVersions)) {
+        supportedVersions = [pinned] + supportedVersions
+    } else if (pinned) {
+        // Move pinned to front
+        supportedVersions = ([pinned] + supportedVersions.findAll { it != pinned })
+    }
+
+    def pyCmds = supportedVersions.collectMany { [["python$it"], ["py", "-$it"]] }
+    pyCmds += [['python3'], ['python'], ['py']]
+    for (pyCmd in pyCmds) {
+        def pyVer = checkPythonVersion(pyCmd)
+        def pyExe = getPythonExecutable(pyCmd)
+        if (pyVer in supportedVersions) {
+            if (shouldPrint) {
+                def pinInfo = pinned ? ", pinned=${pinned}" : ""
+                logger.lifecycle("Python3 command: ${pyCmd} (${pyVer}, ${pyExe}${pinInfo})")
+            }
+			// Verify pip readiness at configuration time
+			checkPip(pyCmd, shouldPrint)
+            return pyCmd
+        }
+    }
+
+    if (shouldPrint) {
+        logger.lifecycle("Warning: Supported Python [${PYTHON_SUPPORTED}] not found (required for build)")
+    }
+
+    // Don't fail until task execution. Just return null, which can be gracefully handled later.
+    return null
+}
+
+// Minimal, quote-aware argument tokenizer for custom args
+static List<String> tokenizeArgs(String s) {
+    List<String> out = []
+    StringBuilder cur = new StringBuilder()
+    boolean inSingle = false
+    boolean inDouble = false
+    for (int i = 0; i < s.length(); i++) {
+        char c = s.charAt(i)
+        if (c == '\'' && !inDouble) { inSingle = !inSingle; continue }
+        if (c == '"' && !inSingle) { inDouble = !inDouble; continue }
+        if (Character.isWhitespace(c) && !inSingle && !inDouble) {
+            if (cur.length() > 0) { out.add(cur.toString()); cur.setLength(0) }
+        } else {
+            cur.append(c)
+        }
+    }
+    if (cur.length() > 0) { out.add(cur.toString()) }
+    return out
 }
 
 /******************************************************************************************

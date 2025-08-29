@@ -237,6 +237,7 @@ task createPythonTypeStubs(type: Javadoc, description: 'Generate pyi stubs for a
 
 
 task createGhidraStubsWheel {
+    dependsOn(":createPythonVirtualEnvironment")
 	group = 'private'
 	description = "Creates the ghidra-stubs wheel for the Ghidra api.  [gradle/root/distribution.gradle]"
 
@@ -301,12 +302,13 @@ task createGhidraStubsWheel {
 			throw new GradleException("A supported version of Python [${PYTHON_SUPPORTED}] was not found!")
 		}
 		
-		def exec = providers.exec {
-			workingDir { typestubsDir }
-			ignoreExitValue = true
-			commandLine PYTHON3
-			args "-m", "pip", "wheel", "-w", distDir, "--no-index", "-f", setuptools, "."
-		}
+        def exec = providers.exec {
+            workingDir { typestubsDir }
+            ignoreExitValue = true
+            // Use system Python to build wheels for offline/flag parity reliability
+            commandLine PYTHON3
+            args "-m", "pip", "wheel", "-w", distDir, "--no-index", "-f", setuptools, "."
+        }
 		if (exec.result.get().exitValue != 0) {
 			throw new GradleException(exec.standardError.asText.get().strip())
 		}
@@ -718,5 +720,3 @@ task buildGhidra() {
 	dependsOn createInstallationZip
 	
 }
-
-
